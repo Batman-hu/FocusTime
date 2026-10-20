@@ -68,6 +68,28 @@ namespace FocusTime
                 bool blocked = false;
                 try { completedStore.Load(); } catch { blocked = true; }
                 Check(blocked && File.ReadAllText(completedStore.FilePath) == "bad", "two corrupt files never reset user data");
+                e = New();
+                var first = e.Data.Projects[0];
+                var second = new FocusProject { Id = Guid.NewGuid().ToString("N"), Name = "保留项目", Color = "#F5A025" };
+                e.Data.Projects.Add(second);
+                e.Start(first, "up", 1, t, 0); e.Finish(t.AddSeconds(4), 4);
+                e.Start(second, "up", 1, t.AddSeconds(10), 10); e.Finish(t.AddSeconds(15), 15);
+                var deletionStore = new DataStore(Path.Combine(temp, "deletion")); deletionStore.Save(e.Data);
+                string backup = deletionStore.BackupBeforeProjectDeletion(e.Data);
+                e.Data.DeleteProject(first.Id); e.Data.Validate();
+                Check(e.Data.Projects.Count == 1 && e.Data.Sessions.Count == 1 && e.Data.Sessions[0].ProjectId == second.Id, "delete removes only selected project and its records");
+                Check(e.Data.SelectedProjectId == second.Id, "delete selected project selects another available project");
+                Near(Stats.Total(e.Data, null, null, null), 5, "remaining project totals preserved after deletion");
+                deletionStore.Save(e.Data);
+                Check(DataStore.Read(backup).Projects.Count == 2 && DataStore.Read(backup).Sessions.Count == 2, "independent deletion backup retains all original records");
+                Check(deletionStore.Load().Sessions.Count == 1, "deleted records remain deleted after reload");
+                e.Start(second, "up", 1, t, 0); e.Pause(t.AddSeconds(1), 1);
+                bool activeBlocked = false;
+                try { e.Data.DeleteProject(second.Id); } catch (InvalidOperationException) { activeBlocked = true; }
+                Check(activeBlocked && e.Data.Projects.Count == 1 && e.Active != null, "unfinished session blocks project deletion even while paused");
+                e.Finish(t.AddSeconds(2), 2); e.Data.DeleteProject(second.Id); e.Data.Validate();
+                Check(e.Data.Projects.Count == 0 && e.Data.Sessions.Count == 0 && e.Data.SelectedProjectId == null, "deleting last project leaves a valid empty state");
+                deletionStore.Save(e.Data); Check(deletionStore.Load().Projects.Count == 0, "empty project list saves and reloads");
                 Console.WriteLine("All " + count + " checks passed."); return 0;
             }
             catch (Exception ex) { Console.Error.WriteLine(ex.ToString()); return 1; }

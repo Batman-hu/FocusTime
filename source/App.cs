@@ -254,6 +254,7 @@ namespace FocusTime
         private double lastSave, lastStats;
         private DateTime statsDate = DateTime.Today;
         private MiniWindow mini;
+        private WindowState mainStateBeforeMini = WindowState.Normal;
         private bool closing, saveError;
 
         public MainWindow(DataStore store, AppData data)
@@ -384,7 +385,7 @@ namespace FocusTime
             todayValue = StyleKit.Text("", 11, StyleKit.Muted); todayValue.TextAlignment = TextAlignment.Center; daily.Children.Add(todayValue); StyleKit.Gap(daily, 20);
             daily.Children.Add(new Border { Height = 1, Background = StyleKit.Line }); StyleKit.Gap(daily, 17);
             var totals = StyleKit.Columns(1, 1); var yesterday = new StackPanel(); yesterday.Children.Add(StyleKit.Text("昨天", 11, StyleKit.Muted));
-            yesterdayValue = StyleKit.Text("0 分钟", 16, StyleKit.Ink); yesterdayValue.Margin = new Thickness(0, 8, 0, 0); yesterday.Children.Add(yesterdayValue);
+            yesterdayValue = StyleKit.Text("0.00 小时", 16, StyleKit.Ink); yesterdayValue.Margin = new Thickness(0, 8, 0, 0); yesterday.Children.Add(yesterdayValue);
             var streak = new StackPanel(); streak.Children.Add(StyleKit.Text("连续达标", 11, StyleKit.Muted)); streakValue = StyleKit.Text("0 天", 16, StyleKit.Ink); streakValue.Margin = new Thickness(0, 8, 0, 0); streak.Children.Add(streakValue);
             totals.Children.Add(yesterday); StyleKit.Add(totals, streak, 0, 1); daily.Children.Add(totals); right.Children.Add(StyleKit.Card(daily, 23));
             StyleKit.Gap(right, 15); var note = new StackPanel(); var manifesto = StyleKit.Text("STAY IN\nMOTION.", 27, StyleKit.Accent); manifesto.FontFamily = new FontFamily("Arial Black"); manifesto.FontWeight = FontWeights.Black; note.Children.Add(manifesto); StyleKit.Gap(note, 10);
@@ -469,10 +470,10 @@ namespace FocusTime
             if (goalText != null)
             {
                 double today = Stats.Total(data, null, DateTime.Today, DateTime.Today);
-                goalText.Text = Math.Floor(today / 60).ToString("0"); goalCaption.Text = "分钟 / 目标 " + data.DailyGoalMinutes + " 分钟";
+                goalText.Text = Stats.Hours(today).Replace(" 小时", ""); goalCaption.Text = "小时 / 目标 " + Stats.Hours(data.DailyGoalMinutes * 60);
                 goalDial.Progress = today / (data.DailyGoalMinutes * 60); goalDial.InvalidateVisual();
-                todayValue.Text = today >= data.DailyGoalMinutes * 60 ? "✓ 今日目标已达成" : "距离目标还差 " + (Math.Ceiling((data.DailyGoalMinutes * 60 - today) / 60)).ToString("0") + " 分钟";
-                yesterdayValue.Text = Stats.Duration(Stats.Total(data, null, DateTime.Today.AddDays(-1), DateTime.Today.AddDays(-1)));
+                todayValue.Text = today >= data.DailyGoalMinutes * 60 ? "✓ 今日目标已达成" : "距离目标还差 " + Stats.Hours(data.DailyGoalMinutes * 60 - today);
+                yesterdayValue.Text = Stats.Hours(Stats.Total(data, null, DateTime.Today.AddDays(-1), DateTime.Today.AddDays(-1)));
                 streakValue.Text = Stats.Streak(data, DateTime.Today) + " 天";
             }
             if (active != null) Title = text + (engine.Running ? " · 专注中" : " · 已暂停") + " · 专注时光";
@@ -509,8 +510,20 @@ namespace FocusTime
         {
             if (mini == null)
             {
+                mainStateBeforeMini = WindowState == WindowState.Minimized ? WindowState.Normal : WindowState;
                 mini = new MiniWindow(Toggle, Finish);
-                mini.Closed += delegate { mini = null; if (!closing) { WindowState = WindowState.Normal; Show(); Activate(); } };
+                mini.Width = Math.Max(mini.MinWidth, Math.Min(data.MiniWidth > 0 ? data.MiniWidth : mini.Width, SystemParameters.WorkArea.Width));
+                mini.Height = Math.Max(mini.MinHeight, Math.Min(data.MiniHeight > 0 ? data.MiniHeight : mini.Height, SystemParameters.WorkArea.Height));
+                mini.SizeChanged += delegate
+                {
+                    if (mini != null && mini.WindowState == WindowState.Normal)
+                    { data.MiniWidth = mini.Width; data.MiniHeight = mini.Height; }
+                };
+                mini.Closed += delegate
+                {
+                    mini = null;
+                    if (!closing) { Save(); WindowState = mainStateBeforeMini; Show(); Activate(); }
+                };
                 mini.Show();
             }
             UpdateDisplay(); WindowState = WindowState.Minimized; mini.Activate();
@@ -521,7 +534,7 @@ namespace FocusTime
             var pagePanel = new StackPanel(); var summaries = StyleKit.Columns(1, 1, 1);
             statsTodayValue = StatBox(summaries, 0, "今日专注"); weekValue = StatBox(summaries, 1, "本周专注"); allValue = StatBox(summaries, 2, "累计专注"); pagePanel.Children.Add(summaries);
             StyleKit.Gap(pagePanel, 16);
-            var chartPanel = new StackPanel(); var chartTitle = new DockPanel(); var export = StyleKit.Button("导出 CSV", Export, false); export.Padding = new Thickness(12, 6, 12, 6); DockPanel.SetDock(export, Dock.Right); chartTitle.Children.Add(export); chartTitle.Children.Add(StyleKit.Text("近 7 天 · 每日投入", 16, StyleKit.Ink)); chartPanel.Children.Add(chartTitle);
+            var chartPanel = new StackPanel(); var chartTitle = new DockPanel(); var export = StyleKit.Button("导出 CSV", Export, false); export.Padding = new Thickness(12, 6, 12, 6); DockPanel.SetDock(export, Dock.Right); chartTitle.Children.Add(export); chartTitle.Children.Add(StyleKit.Text("近 7 天 · 每日投入（小时）", 16, StyleKit.Ink)); chartPanel.Children.Add(chartTitle);
             weekChart = new Grid { Height = 172, Margin = new Thickness(0, 18, 0, 0) }; chartPanel.Children.Add(weekChart); pagePanel.Children.Add(StyleKit.Card(chartPanel, 22));
             StyleKit.Gap(pagePanel, 16);
             var details = new StackPanel(); var filterRow = new DockPanel();
@@ -541,14 +554,14 @@ namespace FocusTime
         private TextBlock StatBox(Grid grid, int column, string label)
         {
             var p = new StackPanel(); p.Children.Add(StyleKit.Text(label, 11, StyleKit.Muted)); StyleKit.Gap(p, 9);
-            var value = StyleKit.Text("0 秒", 22, StyleKit.Ink); value.FontWeight = FontWeights.SemiBold; p.Children.Add(value);
+            var value = StyleKit.Text("0.00 小时", 22, StyleKit.Ink); value.FontWeight = FontWeights.SemiBold; p.Children.Add(value);
             var card = StyleKit.Card(p, 18); card.Margin = new Thickness(column == 0 ? 0 : 5, 0, column == 2 ? 0 : 5, 0); StyleKit.Add(grid, card, 0, column); return value;
         }
         private DateTime WeekStart() { return DateTime.Today.AddDays(-((int)DateTime.Today.DayOfWeek + 6) % 7); }
         private void UpdateStats()
         {
             if (allValue == null || breakdown == null || history == null || weekChart == null) return;
-            allValue.Text = Stats.Duration(Stats.Total(data, null, null, null)); statsTodayValue.Text = Stats.Duration(Stats.Total(data, null, DateTime.Today, DateTime.Today)); weekValue.Text = Stats.Duration(Stats.Total(data, null, WeekStart(), DateTime.Today));
+            allValue.Text = Stats.Hours(Stats.Total(data, null, null, null)); statsTodayValue.Text = Stats.Hours(Stats.Total(data, null, DateTime.Today, DateTime.Today)); weekValue.Text = Stats.Hours(Stats.Total(data, null, WeekStart(), DateTime.Today));
             weekChart.Children.Clear(); weekChart.ColumnDefinitions.Clear();
             var days = Enumerable.Range(0, 7).Select(i => DateTime.Today.AddDays(i - 6)).ToArray();
             var totals = days.Select(d => Stats.Total(data, null, d, d)).ToArray(); double max = Math.Max(60, totals.Max());
@@ -557,8 +570,8 @@ namespace FocusTime
                 weekChart.ColumnDefinitions.Add(new ColumnDefinition()); var column = new Grid { Margin = new Thickness(9, 0, 9, 0) };
                 column.RowDefinitions.Add(new RowDefinition()); column.RowDefinitions.Add(new RowDefinition { Height = new GridLength(25) });
                 var barStack = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom, HorizontalAlignment = HorizontalAlignment.Stretch };
-                var value = StyleKit.Text(totals[i] < 60 && totals[i] > 0 ? "<1 分" : Math.Floor(totals[i] / 60).ToString("0") + " 分", 10, StyleKit.Muted); value.TextAlignment = TextAlignment.Center; value.Margin = new Thickness(0, 0, 0, 6); barStack.Children.Add(value);
-                var bar = new Border { Height = Math.Max(3, totals[i] / max * 113), MaxWidth = 44, CornerRadius = new CornerRadius(5, 5, 0, 0), Background = i == 6 ? StyleKit.Accent : StyleKit.Brush("#4B8399"), ToolTip = days[i].ToString("yyyy-MM-dd") + " · " + Stats.Duration(totals[i]) }; barStack.Children.Add(bar); column.Children.Add(barStack);
+                var value = StyleKit.Text(Stats.Hours(totals[i]), 10, StyleKit.Muted); value.TextAlignment = TextAlignment.Center; value.Margin = new Thickness(0, 0, 0, 6); barStack.Children.Add(value);
+                var bar = new Border { Height = Math.Max(3, totals[i] / max * 113), MaxWidth = 44, CornerRadius = new CornerRadius(5, 5, 0, 0), Background = i == 6 ? StyleKit.Accent : StyleKit.Brush("#4B8399"), ToolTip = days[i].ToString("yyyy-MM-dd") + " · " + Stats.Hours(totals[i]) }; barStack.Children.Add(bar); column.Children.Add(barStack);
                 var dayText = StyleKit.Text(i == 6 ? "今天" : days[i].ToString("M/d"), 10, StyleKit.Muted); dayText.TextAlignment = TextAlignment.Center; dayText.VerticalAlignment = VerticalAlignment.Bottom; StyleKit.Add(column, dayText, 1, 0); StyleKit.Add(weekChart, column, 0, i);
             }
             DateTime? start = rangeIndex == 1 ? DateTime.Today : rangeIndex == 2 ? WeekStart() : rangeIndex == 3 ? new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1) : (DateTime?)null;
@@ -573,7 +586,7 @@ namespace FocusTime
                 var track = new Grid { VerticalAlignment = VerticalAlignment.Center, Height = 7, Margin = new Thickness(12, 0, 15, 0) };
                 track.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(item.Seconds / whole, GridUnitType.Star) }); track.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(0, 1 - item.Seconds / whole), GridUnitType.Star) });
                 var back = new Border { Background = StyleKit.Brush("#243F50"), CornerRadius = new CornerRadius(4) }; Grid.SetColumnSpan(back, 2); track.Children.Add(back); track.Children.Add(new Border { Background = StyleKit.Brush(item.Project.Color), CornerRadius = new CornerRadius(4) }); StyleKit.Add(row, track, 0, 1);
-                var amount = StyleKit.Text(Stats.Duration(item.Seconds), 11, StyleKit.Muted); amount.TextAlignment = TextAlignment.Right; StyleKit.Add(row, amount, 0, 2); breakdown.Children.Add(row);
+                var amount = StyleKit.Text(Stats.Hours(item.Seconds), 11, StyleKit.Muted); amount.TextAlignment = TextAlignment.Right; StyleKit.Add(row, amount, 0, 2); breakdown.Children.Add(row);
             }
             if (whole == 0) breakdown.Children.Add(StyleKit.Text("这里还没有专注记录。开始第一段专注吧。", 13, StyleKit.Muted));
             string from = start.HasValue ? start.Value.ToString("yyyy-MM-dd") : null, to = end.HasValue ? end.Value.ToString("yyyy-MM-dd") : null;
@@ -584,7 +597,7 @@ namespace FocusTime
             foreach (var record in records.Take(100))
             {
                 var s = record.Session; var row = new DockPanel { Margin = new Thickness(0, 12, 0, 0) };
-                var duration = StyleKit.Text(Stats.Duration(record.Seconds), 12, StyleKit.Ink); duration.Margin = new Thickness(14, 0, 0, 0); DockPanel.SetDock(duration, Dock.Right); row.Children.Add(duration);
+                var duration = StyleKit.Text(Stats.Hours(record.Seconds), 12, StyleKit.Ink); duration.Margin = new Thickness(14, 0, 0, 0); DockPanel.SetDock(duration, Dock.Right); row.Children.Add(duration);
                 var info = new StackPanel(); var name = StyleKit.Text(ProjectName(s.ProjectId), 12, StyleKit.Ink); info.Children.Add(name);
                 string status = s == data.Active ? engine.Running ? "进行中" : "暂停中" : s.Completed ? "已完成" : "手动结束";
                 info.Children.Add(StyleKit.Text(s.StartedUtc.ToLocalTime().ToString("MM/dd HH:mm") + "  ·  " + (s.Mode == "up" ? "正计时" : "倒计时") + "  ·  " + status, 10, StyleKit.Muted)); row.Children.Add(info); history.Children.Add(row);
@@ -617,13 +630,40 @@ namespace FocusTime
                     if (p.Archived && data.SelectedProjectId == p.Id) data.SelectedProjectId = data.Projects.Where(x => !x.Archived).Select(x => x.Id).FirstOrDefault();
                     if (!p.Archived && data.SelectedProjectId == null) data.SelectedProjectId = p.Id;
                     Save(); Render(); if (!saveError) Notice(p.Archived ? "项目已归档，历史时长仍保留。" : "项目已恢复。", false);
-                }, false); actions.Children.Add(archive); DockPanel.SetDock(actions, Dock.Right); row.Children.Add(actions);
+                }, false); actions.Children.Add(archive);
+                var delete = StyleKit.Button("删除", delegate { DeleteProject(p); }, false);
+                delete.Tag = p.Id; delete.Foreground = StyleKit.Brush("#FFB8A6"); delete.Background = StyleKit.Brush("#633C292C"); delete.Margin = new Thickness(8, 0, 0, 0); actions.Children.Add(delete);
+                DockPanel.SetDock(actions, Dock.Right); row.Children.Add(actions);
                 var dot = new Border { Width = 11, Height = 11, Background = StyleKit.Brush(p.Color), CornerRadius = new CornerRadius(6), Margin = new Thickness(0, 0, 15, 0), VerticalAlignment = VerticalAlignment.Center }; DockPanel.SetDock(dot, Dock.Left); row.Children.Add(dot);
                 var info = new StackPanel { Margin = new Thickness(0, 0, 12, 0) }; info.Children.Add(StyleKit.Text(p.Name + (p.Archived ? "  ·  已归档" : ""), 16, StyleKit.Ink)); StyleKit.Gap(info, 7);
-                info.Children.Add(StyleKit.Text("累计 " + Stats.Duration(Stats.Total(data, p.Id, null, null)) + "   /   " + data.Sessions.Count(s => s.ProjectId == p.Id) + " 段已结束", 11, StyleKit.Muted)); row.Children.Add(info);
+                info.Children.Add(StyleKit.Text("累计 " + Stats.Hours(Stats.Total(data, p.Id, null, null)) + "   /   " + data.Sessions.Count(s => s.ProjectId == p.Id) + " 段已结束", 11, StyleKit.Muted)); row.Children.Add(info);
                 var card = StyleKit.Card(row, 22); card.Margin = new Thickness(0, 0, 0, 12); if (p.Archived) card.Opacity = .65; panel.Children.Add(card);
             }
-            StyleKit.Gap(panel, 8); panel.Children.Add(StyleKit.Text("项目归档后不再出现在计时选择中，历史记录和累计时长会继续保留。", 11, StyleKit.Muted)); return new ScrollViewer { Content = panel };
+            if (data.Projects.Count == 0) panel.Children.Add(StyleKit.Card(StyleKit.Text("还没有项目，点击右上角“新建项目”开始。", 14, StyleKit.Muted), 25));
+            StyleKit.Gap(panel, 8); panel.Children.Add(StyleKit.Text("归档保留历史记录；删除会移除项目和所属记录，确认前会显示受影响的时长。", 11, StyleKit.Muted)); return new ScrollViewer { Content = panel };
+        }
+        private void DeleteProject(FocusProject project)
+        {
+            if (engine.Active != null && engine.Active.ProjectId == project.Id)
+            { Notice("该项目有未结束的专注，请先结束并记录，再删除项目。", true); return; }
+            int count = data.Sessions.Count(s => s.ProjectId == project.Id);
+            var dialog = new DeleteProjectDialog(project.Name, count, Stats.Total(data, project.Id, null, null)) { Owner = this };
+            if (dialog.ShowDialog() != true) return;
+            var oldProjects = data.Projects.ToList(); var oldSessions = data.Sessions.ToList();
+            string oldSelection = data.SelectedProjectId;
+            try
+            {
+                store.BackupBeforeProjectDeletion(data);
+                data.DeleteProject(project.Id);
+                if (!Save()) throw new IOException("删除结果保存失败，原项目和记录已保留。");
+            }
+            catch (Exception ex)
+            {
+                data.Projects = oldProjects; data.Sessions = oldSessions; data.SelectedProjectId = oldSelection;
+                Render(); Notice("删除未完成，原项目和记录已保留：" + ex.Message, true); return;
+            }
+            if (filterProject == project.Id) filterProject = null;
+            Render(); Notice("已删除「" + project.Name + "」及其 " + count + " 段记录；删除前的备份已保存在数据文件夹的 Backups 中。", false);
         }
         private void EditProject(FocusProject project)
         {
@@ -711,6 +751,47 @@ namespace FocusTime
             if (data.SelectedProjectId != reading.Id) throw new Exception("Themed project dropdown did not change selection.");
             projects.IsDropDownOpen = false;
             projects.SelectedItem = data.Projects[0];
+            // Exercise deletion only on disposable test records, including cancel and save-failure rollback.
+            var disposable = new FocusProject { Id = Guid.NewGuid().ToString("N"), Name = "写错的测试项目", Color = "#D08B91" };
+            data.Projects.Add(disposable);
+            data.Sessions.Add(new FocusSession { Id = Guid.NewGuid().ToString("N"), ProjectId = disposable.Id, ProjectName = disposable.Name,
+                Mode = "up", StartedUtc = DateTime.UtcNow.AddMinutes(-2), EndedUtc = DateTime.UtcNow, Seconds = 120,
+                Days = new List<DaySlice> { new DaySlice { Day = DateTime.Today.ToString("yyyy-MM-dd"), Seconds = 120 } } });
+            Save();
+            Action<bool> respondToDeletion = delegate(bool confirm)
+            {
+                Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(delegate
+                {
+                    var dialog = Application.Current.Windows.OfType<DeleteProjectDialog>().Single();
+                    dialog.UpdateLayout(); Capture(dialog, Path.Combine(folder, "delete-project.png"));
+                    VisualDescendants<Button>(dialog).Single(b => Convert.ToString(b.Content) == (confirm ? "删除项目" : "取消")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                }));
+            };
+            Action clickDelete = delegate
+            {
+                page = "projects"; Render(); UpdateLayout();
+                VisualDescendants<Button>(content).Single(b => Convert.ToString(b.Content) == "删除" && Convert.ToString(b.Tag) == disposable.Id).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            };
+            int recordsBeforeDeletion = data.Sessions.Count;
+            respondToDeletion(false); clickDelete();
+            if (!data.Projects.Contains(disposable) || data.Sessions.Count != recordsBeforeDeletion) throw new Exception("Cancel deletion changed data.");
+            using (var locked = new FileStream(store.FilePath, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                respondToDeletion(true); clickDelete();
+                if (!data.Projects.Contains(disposable) || data.Sessions.Count != recordsBeforeDeletion) throw new Exception("Failed deletion did not roll back.");
+            }
+            respondToDeletion(true); clickDelete();
+            if (data.Projects.Contains(disposable) || data.Sessions.Count != recordsBeforeDeletion - 1 || store.Load().Projects.Any(p => p.Id == disposable.Id))
+                throw new Exception("Confirmed deletion did not remove exactly the selected project's records.");
+            if (!Directory.GetFiles(Path.Combine(store.DirectoryPath, "Backups"), "before-project-delete-*.json").Any(f => DataStore.Read(f).Projects.Any(p => p.Id == disposable.Id)))
+                throw new Exception("Deletion backup did not retain the original project.");
+            page = "settings"; Render(); UpdateLayout();
+            var hoursGoal = VisualDescendants<TextBox>(content).First(t => !t.IsReadOnly);
+            hoursGoal.Text = "0.75";
+            VisualDescendants<Button>(content).Single(b => Convert.ToString(b.Content) == "保存目标").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (data.DailyGoalMinutes != 45) throw new Exception("Fractional hourly goal did not persist correctly.");
+            hoursGoal.Text = "2";
+            VisualDescendants<Button>(content).Single(b => Convert.ToString(b.Content) == "保存目标").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             foreach (string target in new[] { "focus", "stats", "projects", "settings" })
             {
                 page = target; Render(); UpdateLayout(); Capture(this, Path.Combine(folder, target + ".png"));
@@ -723,13 +804,32 @@ namespace FocusTime
             filterProject = null; rangeIndex = 0;
             Width = MinWidth; Height = MinHeight; page = "focus"; Render(); UpdateLayout(); Capture(this, Path.Combine(folder, "focus-compact.png"));
             Width = 1180; Height = 820;
-            page = "focus"; Render();
+            page = "focus"; Render(); SetMode("up"); Toggle();
+            string sessionBeforeMini = engine.Active.Id;
             ShowMini();
             mini.Update("20:00", "正在专注", "日常学习", .2, true, true, StyleKit.Accent); mini.UpdateLayout();
-            Capture(mini, Path.Combine(folder, "mini.png")); mini.Close();
-            if (mini != null || WindowState != WindowState.Normal) throw new Exception("Mini window did not restore main window.");
+            mini.VerifyResponsiveLayout(); Capture(mini, Path.Combine(folder, "mini.png"));
+            foreach (var size in new[] { new Size(640, 310), new Size(280, 650), new Size(250, 280), new Size(500, 580) })
+            {
+                mini.Width = size.Width; mini.Height = size.Height;
+                Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, new Action(delegate { }));
+                mini.VerifyResponsiveLayout();
+                Capture(mini, Path.Combine(folder, "mini-" + size.Width + "x" + size.Height + ".png"));
+            }
+            VisualDescendants<Button>(mini).Single(b => Convert.ToString(b.Tag) == "return-full-view").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (mini != null || WindowState != WindowState.Normal || !engine.Running || engine.Active.Id != sessionBeforeMini)
+                throw new Exception("Return to full view interrupted the session or failed to restore the main window.");
+            var savedSize = store.Load();
+            if (Math.Abs(savedSize.MiniWidth - 500) > 1 || Math.Abs(savedSize.MiniHeight - 580) > 1)
+                throw new Exception("Resized mini-window dimensions did not persist.");
+            ShowMini();
+            if (Math.Abs(mini.Width - 500) > 1 || Math.Abs(mini.Height - 580) > 1)
+                throw new Exception("Reopened mini window lost its previous dimensions.");
+            mini.Close();
+            if (mini != null || !engine.Running) throw new Exception("Closing the mini window interrupted focus.");
+            Finish();
             Stats.ExportCsv(data, Path.Combine(folder, "sample-records.csv"));
-            File.WriteAllText(Path.Combine(folder, "ui-test-passed.txt"), "PASS: real timer advance, pause exclusion, button-based start/pause/resume/finish, countdown auto-completion, persistence reload, project create/edit/archive/restore, themed dropdown popup/selection, four pages, populated statistics, filters, compact layout, mini window restoration and CSV.\r\nPreview records are synthetic and use isolated temporary storage.\r\n" + DateTime.Now.ToString("O"));
+            File.WriteAllText(Path.Combine(folder, "ui-test-passed.txt"), "PASS: real timer advance, pause exclusion, button-based start/pause/resume/finish, countdown auto-completion, persistence reload, project create/edit/archive/restore, deletion cancel/confirm, save-failure rollback, independent deletion backup, fractional hourly goal, themed dropdown popup/selection, four pages, populated statistics, filters, compact layout, mini-window return button, wide/tall/minimum/enlarged layouts, persisted window dimensions, uninterrupted focus during view switching and CSV.\r\nPreview records are synthetic and use isolated temporary storage.\r\n" + DateTime.Now.ToString("O"));
         }
         private static IEnumerable<T> VisualDescendants<T>(DependencyObject parent) where T : DependencyObject
         {
@@ -758,9 +858,19 @@ namespace FocusTime
         {
             var panel = new StackPanel(); var daily = new StackPanel(); daily.Children.Add(StyleKit.Text("每日目标", 17, StyleKit.Ink)); StyleKit.Gap(daily, 9);
             daily.Children.Add(StyleKit.Text("累计专注达到目标后，首页圆环会标记达成。连续达标按当前目标计算。", 12, StyleKit.Muted)); StyleKit.Gap(daily, 17);
-            var row = new StackPanel { Orientation = Orientation.Horizontal }; var goal = new TextBox { Text = data.DailyGoalMinutes.ToString(), Width = 100, MaxLength = 4 };
-            row.Children.Add(goal); var label = StyleKit.Text("分钟 / 天", 12, StyleKit.Muted); label.Margin = new Thickness(12, 12, 20, 0); row.Children.Add(label);
-            row.Children.Add(StyleKit.Button("保存目标", delegate { int value; if (!Int32.TryParse(goal.Text, out value) || value < 1 || value > 1440) { Notice("每日目标请输入 1–1440 之间的整数分钟。", true); return; } data.DailyGoalMinutes = value; if (Save()) Notice("每日目标已更新为 " + value + " 分钟。", false); }, true)); daily.Children.Add(row);
+            var row = new StackPanel { Orientation = Orientation.Horizontal }; var goal = new TextBox { Text = (data.DailyGoalMinutes / 60.0).ToString("0.##", CultureInfo.InvariantCulture), Width = 100, MaxLength = 6 };
+            row.Children.Add(goal); var label = StyleKit.Text("小时 / 天", 12, StyleKit.Muted); label.Margin = new Thickness(12, 12, 20, 0); row.Children.Add(label);
+            row.Children.Add(StyleKit.Button("保存目标", delegate
+            {
+                decimal hours;
+                if (!Decimal.TryParse(goal.Text, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out hours) || hours <= 0 || hours > 24)
+                { Notice("请输入大于 0 且不超过 24 的小时数，例如 0.5、1.5 或 2。", true); return; }
+                int value = (int)Math.Round(hours * 60, 0, MidpointRounding.AwayFromZero);
+                if (value < 1) { Notice("每日目标至少为 1 分钟，可输入 0.02 小时。", true); return; }
+                data.DailyGoalMinutes = value; goal.Text = (value / 60.0).ToString("0.##", CultureInfo.InvariantCulture);
+                if (Save()) Notice("每日目标已更新为 " + Stats.Hours(value * 60) + "。", false);
+            }, true)); daily.Children.Add(row);
+            StyleKit.Gap(daily, 8); daily.Children.Add(StyleKit.Text("可输入小数小时，目标按分钟精度保存。", 11, StyleKit.Muted));
             StyleKit.Gap(daily, 21); var sound = new CheckBox { Content = "倒计时结束时播放系统提示音", IsChecked = data.Sound, FontSize = 13 };
             sound.Checked += delegate { data.Sound = true; Save(); }; sound.Unchecked += delegate { data.Sound = false; Save(); }; daily.Children.Add(sound); panel.Children.Add(StyleKit.Card(daily, 25));
             StyleKit.Gap(panel, 17); var storage = new StackPanel(); storage.Children.Add(StyleKit.Text("数据与备份", 17, StyleKit.Ink)); StyleKit.Gap(storage, 11);
@@ -779,19 +889,54 @@ namespace FocusTime
     {
         private readonly Dial dial;
         private readonly TextBlock time, state, project;
-        private readonly Button toggle, finish;
+        private readonly Button toggle, finish, returnToFullView;
         private bool done;
         public MiniWindow(Action toggleAction, Action finishAction)
         {
-            Title = "专注时光 · 置顶小窗"; Width = 322; Height = 422; ResizeMode = ResizeMode.NoResize; Topmost = true;
+            Title = "专注时光 · 置顶小窗"; Width = 322; Height = 430; MinWidth = 250; MinHeight = 280;
+            ResizeMode = ResizeMode.CanResizeWithGrip; WindowStyle = WindowStyle.None; Topmost = true;
+            System.Windows.Shell.WindowChrome.SetWindowChrome(this, new System.Windows.Shell.WindowChrome
+            {
+                CaptionHeight = 40, ResizeBorderThickness = new Thickness(7),
+                GlassFrameThickness = new Thickness(0), CornerRadius = new CornerRadius(12), UseAeroCaptionButtons = false
+            });
             WindowStartupLocation = WindowStartupLocation.CenterScreen; Background = StyleKit.Ocean; FontFamily = new FontFamily("Microsoft YaHei UI"); Foreground = StyleKit.Ink; StyleKit.DarkTitleBar(this);
-            var panel = new StackPanel { Margin = new Thickness(22, 17, 22, 16) }; Content = new Border { Background = StyleKit.Brush("#DC061A28"), Child = panel };
-            project = StyleKit.Text("", 14, StyleKit.Ink); project.TextAlignment = TextAlignment.Center; project.TextTrimming = TextTrimming.CharacterEllipsis; project.TextWrapping = TextWrapping.NoWrap; panel.Children.Add(project);
-            var face = new Grid { HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 13, 0, 8) }; dial = new Dial { Width = 218, Height = 218, Ticks = true }; face.Children.Add(dial);
-            time = StyleKit.Text("00:00", 39, StyleKit.Ink); time.FontFamily = new FontFamily("Segoe UI"); time.VerticalAlignment = VerticalAlignment.Center; time.HorizontalAlignment = HorizontalAlignment.Center; face.Children.Add(time); panel.Children.Add(face);
-            state = StyleKit.Text("", 11, StyleKit.Muted); state.TextAlignment = TextAlignment.Center; panel.Children.Add(state); StyleKit.Gap(panel, 16);
+            var root = new Grid();
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(40) });
+            root.RowDefinitions.Add(new RowDefinition());
+            Content = new Border { Background = StyleKit.Brush("#DC061A28"), BorderBrush = StyleKit.Line, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Child = root };
+            var panel = new Grid { Margin = new Thickness(16, 4, 16, 20) }; StyleKit.Add(root, panel, 1, 0);
+            panel.RowDefinitions.Add(new RowDefinition());
+            panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var header = new Grid();
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(40) });
+            header.ColumnDefinitions.Add(new ColumnDefinition());
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(40) });
+            returnToFullView = StyleKit.Button("↙", delegate { Close(); }, false);
+            returnToFullView.ToolTip = "返回完整视图"; returnToFullView.Tag = "return-full-view";
+            returnToFullView.FontFamily = new FontFamily("Segoe UI Symbol"); returnToFullView.FontSize = 21;
+            returnToFullView.Width = 40; returnToFullView.Height = 40; returnToFullView.MinHeight = 40;
+            returnToFullView.Padding = new Thickness(0); returnToFullView.Background = Brushes.Transparent;
+            System.Windows.Automation.AutomationProperties.SetName(returnToFullView, "返回完整视图");
+            System.Windows.Shell.WindowChrome.SetIsHitTestVisibleInChrome(returnToFullView, true);
+            header.Children.Add(returnToFullView);
+            var close = StyleKit.Button("×", delegate { Close(); }, false);
+            close.ToolTip = "关闭小窗"; close.Width = 40; close.Height = 40; close.MinHeight = 40;
+            close.FontFamily = new FontFamily("Segoe UI"); close.FontSize = 23; close.Padding = new Thickness(0); close.Background = Brushes.Transparent;
+            System.Windows.Automation.AutomationProperties.SetName(close, "关闭小窗");
+            System.Windows.Shell.WindowChrome.SetIsHitTestVisibleInChrome(close, true); StyleKit.Add(header, close, 0, 2);
+            project = StyleKit.Text("", 14, StyleKit.Ink); project.TextAlignment = TextAlignment.Center; project.TextTrimming = TextTrimming.CharacterEllipsis; project.TextWrapping = TextWrapping.NoWrap;
+            project.VerticalAlignment = VerticalAlignment.Center; StyleKit.Add(header, project, 0, 1); root.Children.Add(header);
+            var face = new Grid { Width = 218, Height = 218 }; dial = new Dial { Width = 218, Height = 218, Ticks = true }; face.Children.Add(dial);
+            time = StyleKit.Text("00:00", 39, StyleKit.Ink); time.FontFamily = new FontFamily("Segoe UI"); time.VerticalAlignment = VerticalAlignment.Center; time.HorizontalAlignment = HorizontalAlignment.Center; face.Children.Add(time);
+            var scalableFace = new Viewbox { Stretch = Stretch.Uniform, Margin = new Thickness(0, 10, 0, 10), Child = face };
+            StyleKit.Add(panel, scalableFace, 0, 0);
+            state = StyleKit.Text("", 11, StyleKit.Muted); state.TextAlignment = TextAlignment.Center;
+            state.TextWrapping = TextWrapping.NoWrap; state.TextTrimming = TextTrimming.CharacterEllipsis; state.Margin = new Thickness(0, 0, 0, 14);
+            StyleKit.Add(panel, state, 1, 0);
             var controls = StyleKit.Columns(1, 1); toggle = StyleKit.Button("开始", delegate { done = false; toggleAction(); }, true); toggle.Margin = new Thickness(0, 0, 5, 0);
-            finish = StyleKit.Button("结束记录", finishAction, false); finish.Margin = new Thickness(5, 0, 0, 0); controls.Children.Add(toggle); StyleKit.Add(controls, finish, 0, 1); panel.Children.Add(controls);
+            finish = StyleKit.Button("结束记录", finishAction, false); finish.Margin = new Thickness(5, 0, 0, 0); controls.Children.Add(toggle); StyleKit.Add(controls, finish, 0, 1); StyleKit.Add(panel, controls, 2, 0);
         }
         public void Update(string text, string caption, string name, double progress, bool active, bool running, Brush accent)
         {
@@ -802,6 +947,41 @@ namespace FocusTime
             toggle.Content = !active ? "▶ 开始" : running ? "Ⅱ 暂停" : "▶ 继续"; finish.IsEnabled = active;
         }
         public void ShowDone() { done = true; time.Text = "✓"; state.Text = "专注完成，休息一下吧。"; }
+        internal void VerifyResponsiveLayout()
+        {
+            UpdateLayout();
+            var root = (FrameworkElement)Content;
+            foreach (FrameworkElement control in new FrameworkElement[] { returnToFullView, project, dial, time, state, toggle, finish })
+            {
+                var bounds = control.TransformToAncestor(root).TransformBounds(new Rect(new Point(), control.RenderSize));
+                if (bounds.Left < -1 || bounds.Top < -1 || bounds.Right > root.ActualWidth + 1 || bounds.Bottom > root.ActualHeight + 1)
+                    throw new Exception("A mini-window control was clipped after resizing.");
+            }
+            var circle = dial.TransformToAncestor(root).TransformBounds(new Rect(new Point(), dial.RenderSize));
+            var caption = state.TransformToAncestor(root).TransformBounds(new Rect(new Point(), state.RenderSize));
+            if (Math.Abs(circle.Width - circle.Height) > 1 || circle.Bottom > caption.Top + 1 || toggle.ActualWidth < 70 || finish.ActualWidth < 70)
+                throw new Exception("Mini-window resizing distorted the dial or overlapped controls.");
+        }
+    }
+
+    internal sealed class DeleteProjectDialog : Window
+    {
+        public DeleteProjectDialog(string name, int count, double seconds)
+        {
+            Title = "确认删除项目"; Width = 450; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize;
+            WindowStartupLocation = WindowStartupLocation.CenterOwner; ShowInTaskbar = false;
+            Background = StyleKit.Brush("#0A202F"); Foreground = StyleKit.Ink; FontFamily = new FontFamily("Microsoft YaHei UI"); StyleKit.DarkTitleBar(this);
+            var panel = new StackPanel { Margin = new Thickness(25) }; Content = panel;
+            panel.Children.Add(StyleKit.Text("删除这个项目？", 21, StyleKit.Ink)); StyleKit.Gap(panel, 14);
+            var title = StyleKit.Text("「" + name + "」", 16, StyleKit.Accent); title.FontWeight = FontWeights.SemiBold; panel.Children.Add(title); StyleKit.Gap(panel, 12);
+            panel.Children.Add(StyleKit.Text(count == 0 ? "这个项目没有专注记录，删除后会从项目列表移除。" : "同时删除该项目的 " + count + " 段记录（" + Stats.Hours(seconds) + "）。\n对应时长也会从统计中移除。", 13, StyleKit.Ink));
+            StyleKit.Gap(panel, 14); panel.Children.Add(StyleKit.Text("删除前会在数据文件夹的 Backups 中保留完整备份。需要保留历史记录时，可以选择归档。", 11, StyleKit.Muted)); StyleKit.Gap(panel, 23);
+            var actions = StyleKit.Columns(1, 1);
+            var cancel = StyleKit.Button("取消", delegate { DialogResult = false; }, false); cancel.IsCancel = true; cancel.IsDefault = true; cancel.Margin = new Thickness(0, 0, 6, 0);
+            var remove = StyleKit.Button("删除项目", delegate { DialogResult = true; }, false); remove.Background = StyleKit.Brush("#A8433B"); remove.Foreground = Brushes.White; remove.Margin = new Thickness(6, 0, 0, 0);
+            actions.Children.Add(cancel); StyleKit.Add(actions, remove, 0, 1); panel.Children.Add(actions);
+            Loaded += delegate { cancel.Focus(); };
+        }
     }
 
     internal sealed class ProjectDialog : Window

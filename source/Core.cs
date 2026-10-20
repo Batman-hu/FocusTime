@@ -50,6 +50,8 @@ namespace FocusTime
         [DataMember] public string SelectedProjectId { get; set; }
         [DataMember] public string SelectedMode { get; set; }
         [DataMember] public bool Sound { get; set; }
+        [DataMember(EmitDefaultValue = false)] public double MiniWidth { get; set; }
+        [DataMember(EmitDefaultValue = false)] public double MiniHeight { get; set; }
         [DataMember] public List<FocusProject> Projects { get; set; }
         [DataMember] public List<FocusSession> Sessions { get; set; }
         [DataMember] public FocusSession Active { get; set; }
@@ -62,12 +64,27 @@ namespace FocusTime
                 Projects = new List<FocusProject> { p }, Sessions = new List<FocusSession>() };
         }
 
+        public void DeleteProject(string projectId)
+        {
+            var project = Projects.FirstOrDefault(p => p.Id == projectId);
+            if (project == null) throw new ArgumentException("项目不存在。");
+            if (Active != null && Active.ProjectId == projectId)
+                throw new InvalidOperationException("该项目有未结束的专注，请先结束并记录。");
+            Sessions.RemoveAll(s => s.ProjectId == projectId);
+            Projects.Remove(project);
+            if (SelectedProjectId == projectId)
+                SelectedProjectId = Projects.Where(p => !p.Archived).Select(p => p.Id).FirstOrDefault();
+        }
+
         public void Validate()
         {
             if (Version != 1 || Projects == null || Sessions == null)
                 throw new InvalidDataException("数据格式或版本不受支持。");
             if (DailyGoalMinutes < 1 || DailyGoalMinutes > 1440 || CountdownMinutes < 1 || CountdownMinutes > 1440)
                 throw new InvalidDataException("计时设置无效。");
+            if (Double.IsNaN(MiniWidth) || Double.IsInfinity(MiniWidth) || MiniWidth < 0 ||
+                Double.IsNaN(MiniHeight) || Double.IsInfinity(MiniHeight) || MiniHeight < 0)
+                throw new InvalidDataException("小窗尺寸设置无效。");
             if (Projects.Any(p => p == null || String.IsNullOrWhiteSpace(p.Id) || String.IsNullOrWhiteSpace(p.Name)) ||
                 Projects.Select(p => p.Id).Distinct().Count() != Projects.Count)
                 throw new InvalidDataException("项目数据无效。");
@@ -134,6 +151,20 @@ namespace FocusTime
                 data.Validate();
                 return data;
             }
+        }
+
+        public string BackupBeforeProjectDeletion(AppData data)
+        {
+            data.Validate();
+            string directory = Path.Combine(DirectoryPath, "Backups");
+            Directory.CreateDirectory(directory);
+            string path = Path.Combine(directory, "before-project-delete-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + "-" + Guid.NewGuid().ToString("N") + ".json");
+            using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                new DataContractJsonSerializer(typeof(AppData)).WriteObject(file, data);
+                file.Flush(true);
+            }
+            return path;
         }
 
         public void Save(AppData data)
@@ -255,6 +286,12 @@ namespace FocusTime
             int count = 0;
             while (Total(data, null, day, day) >= data.DailyGoalMinutes * 60) { count++; day = day.AddDays(-1); }
             return count;
+        }
+        public static string Hours(double seconds)
+        {
+            double value = Math.Max(0, seconds) / 3600;
+            if (value > 0 && value < .01) return "<0.01 小时";
+            return value.ToString("0.00", CultureInfo.InvariantCulture) + " 小时";
         }
         public static string Duration(double seconds)
         {
