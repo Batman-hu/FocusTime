@@ -2,6 +2,8 @@
 
 简单、离线、本地运行的 Windows 专注计时器。
 
+**[下载 Windows 免安装包 ZIP](https://github.com/Batman-hu/FocusTime/raw/refs/tags/v1.1.0/downloads/FocusTime-v1.1.0-Windows.zip)** · **[直接下载 EXE](https://github.com/Batman-hu/FocusTime/raw/refs/tags/v1.1.0/FocusTime.exe)**
+
 解压后双击 `FocusTime.exe` 即可使用。选择项目，开始一段正计时或倒计时，结束后自动积累到自己的专注记录。
 
 - 正计时、倒计时、暂停与继续。
