@@ -1,0 +1,14 @@
+build/
+verification/
+build-log.txt
+Data/
+Temp/
+Exports/
+data.json
+data.json.*
+*.tmp
+*.pdb
+.vs/
+.idea/
+Thumbs.db
+Desktop.ini
